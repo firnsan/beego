@@ -84,14 +84,15 @@ type logFilter struct {
 }
 
 func (l *logFilter) Filter(ctx *beecontext.Context) bool {
+	if ctx.State != beecontext.SC_NORMAL_END {
+		return false
+	}
 	requestPath := path.Clean(ctx.Input.Request.URL.Path)
 	if requestPath == "/favicon.ico" || requestPath == "/robots.txt" {
 		return true
 	}
-	for prefix := range StaticDir {
-		if strings.HasPrefix(requestPath, prefix) {
-			return true
-		}
+	if ctx.LastState == beecontext.SC_STATIC_ROUTING {
+		return true
 	}
 	return false
 }
@@ -578,7 +579,7 @@ func (p *ControllerRegistor) geturl(t *Tree, url, controllName, methodName strin
 func (p *ControllerRegistor) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	starttime := time.Now()
 	var runrouter reflect.Type
-	var findrouter bool
+	var findController bool
 	var runMethod string
 	var routerInfo *controllerInfo
 
@@ -643,11 +644,6 @@ func (p *ControllerRegistor) ServeHTTP(rw http.ResponseWriter, r *http.Request) 
 		goto Admin
 	}
 
-	serverStaticRouter(context)
-	if w.started {
-		findrouter = true
-		goto Admin
-	}
 
 	// session init
 	if SessionOn {
@@ -670,17 +666,14 @@ func (p *ControllerRegistor) ServeHTTP(rw http.ResponseWriter, r *http.Request) 
 		context.Input.ParseFormOrMulitForm(MaxMemory)
 	}
 
-	if do_filter(BeforeRouter) {
-		goto Admin
-	}
-
+	context.SetState(beecontext.SC_CTRL_ROUTING)
 	if context.Input.RunController != nil && context.Input.RunMethod != "" {
-		findrouter = true
+		findController = true
 		runMethod = context.Input.RunMethod
 		runrouter = context.Input.RunController
 	}
 
-	if !findrouter {
+	if !findController {
 		http_method := r.Method
 
 		if http_method == "POST" && context.Input.Query("_method") == "PUT" {
@@ -695,7 +688,7 @@ func (p *ControllerRegistor) ServeHTTP(rw http.ResponseWriter, r *http.Request) 
 			runObject, p := t.Match(urlPath)
 			if r, ok := runObject.(*controllerInfo); ok {
 				routerInfo = r
-				findrouter = true
+				findController = true
 				if splat, ok := p[":splat"]; ok {
 					splatlist := strings.Split(splat, "/")
 					for k, v := range splatlist {
@@ -711,16 +704,25 @@ func (p *ControllerRegistor) ServeHTTP(rw http.ResponseWriter, r *http.Request) 
 	}
 
 	//if no matches to url, throw a not found exception
-	if !findrouter {
+	if !findController {
+		if do_filter(BeforeRouter) {
+			goto Admin
+		}
+		serverStaticRouter(context)
+		if w.started {
+			goto Admin
+		}
+
 		exception("404", context)
 		goto Admin
 	}
 
-	if findrouter {
+	if findController {
 		//execute middleware filters
 		if do_filter(BeforeExec) {
 			goto Admin
 		}
+		context.SetState(beecontext.SC_CTRL_EXECUTING)
 		isRunable := false
 		if routerInfo != nil {
 			if routerInfo.routerType == routerTypeRESTFul {
@@ -828,6 +830,11 @@ func (p *ControllerRegistor) ServeHTTP(rw http.ResponseWriter, r *http.Request) 
 
 Admin:
 	timeend := time.Since(starttime)
+	if context.Output.Status != 0 {
+		context.SetState(beecontext.SC_ABNORMAL_END)
+	} else {
+		context.SetState(beecontext.SC_NORMAL_END)
+	}
 	//admin module record QPS
 	if EnableAdmin {
 		if FilterMonitorFunc(r.Method, r.URL.Path, timeend) {
@@ -841,7 +848,7 @@ Admin:
 
 	if RunMode == "dev" || AccessLogs {
 		var devinfo string
-		if findrouter {
+		if context.State == beecontext.SC_NORMAL_END {
 			if routerInfo != nil {
 				devinfo = fmt.Sprintf("| % -10s | % -40s | % -16s | % -10s | % -40s |", r.Method, r.URL.Path, timeend.String(), "match", routerInfo.pattern)
 			} else {

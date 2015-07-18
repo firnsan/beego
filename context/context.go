@@ -34,6 +34,18 @@ import (
 	"github.com/astaxie/beego/utils"
 )
 
+type StateCode byte
+
+const (
+	SC_PREPARING StateCode = iota
+	SC_CTRL_ROUTING
+	SC_CTRL_EXECUTING
+	SC_STATIC_ROUTING
+	SC_NORMAL_END
+	SC_ABNORMAL_END
+)
+
+
 // Http request context struct including BeegoInput, BeegoOutput, http.Request and http.ResponseWriter.
 // BeegoInput and BeegoOutput provides some api to operate request and response more easily.
 type Context struct {
@@ -41,7 +53,14 @@ type Context struct {
 	Output         *BeegoOutput
 	Request        *http.Request
 	ResponseWriter http.ResponseWriter
+	LastState      StateCode
+	State          StateCode
 	_xsrf_token    string
+}
+
+func (ctx *Context) SetState(state StateCode) {
+	ctx.LastState = ctx.State
+	ctx.State = state
 }
 
 // Redirect does redirection to localurl with http header status code.

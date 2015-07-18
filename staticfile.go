@@ -26,15 +26,30 @@ import (
 )
 
 func serverStaticRouter(ctx *context.Context) {
+	ctx.SetState(context.SC_STATIC_ROUTING)
 	if ctx.Input.Method() != "GET" && ctx.Input.Method() != "HEAD" {
 		return
 	}
 	requestPath := path.Clean(ctx.Input.Request.URL.Path)
+	if RunMode == "dev" {
+		Warn("Request path: ", requestPath)
+	}
+	if len(requestPath) == 0 || requestPath == "/" {
+		return
+	}
+
 	i := 0
 	for prefix, staticDir := range StaticDir {
+		if RunMode == "dev" {
+			Warn("Static prefix: ", prefix)
+		}
+
+		/* root path's prefix is ""
 		if len(prefix) == 0 {
 			continue
 		}
+		*/
+		
 		if requestPath == "/favicon.ico" || requestPath == "/robots.txt" {
 			file := path.Join(staticDir, requestPath)
 			if utils.FileExists(file) {
@@ -51,6 +66,7 @@ func serverStaticRouter(ctx *context.Context) {
 			}
 		}
 		if strings.HasPrefix(requestPath, prefix) {
+			Warn("HasPressfix")
 			if len(requestPath) > len(prefix) && requestPath[len(prefix)] != '/' {
 				continue
 			}
